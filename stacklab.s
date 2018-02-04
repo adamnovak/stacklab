@@ -21,14 +21,6 @@
 # https://opensource.apple.com/source/xnu/xnu-1504.3.12/bsd/kern/syscalls.master
 # Make sure to add 0x2000000 to them to mark them as "Unix" class syscalls.
 
-# Default file descriptors:
-# 0 = standard input
-.set STDIN, 0x0
-# 1 = standard output
-.set STDOUT, 0x1
-# 2 = standard error
-.set STDERR, 0x2
-
 # The 32 bit syscall convention is:
 
 # 1. Pad the stack out so the arguments will end on a 16 byte boundary.
@@ -39,41 +31,207 @@
 # 5. Check the carry flag for an error
 # 6. Collect the return value or error code from %eax
 
+# Default file descriptors:
+# 0 = standard input
+.set STDIN, 0x0
+# 1 = standard output
+.set STDOUT, 0x1
+# 2 = standard error
+.set STDERR, 0x2
+
 .section __TEXT,__text
 # This is where code goes, but constants can also go in here.
 
 # This puts a string, followed by a terminating null byte
 hello_string:
 .asciz "Hello World\n"
+grant_string:
+.asciz "Access Granted\n"
+deny_string:
+.asciz "Access Denied\n"
 
-# Our label should become a symbol that other files can access
-.globl start
+# Here are some functions that get called
+# The function calling convention is different from the syscall calling convention and lives here:
+# https://developer.apple.com/library/content/documentation/DeveloperTools/Conceptual/LowLevelABI/130-IA-32_Function_Calling_Conventions/IA32.html
+# Arguments are pushed onto the stack so that they end at a 16-byte block boundary.
+# The called function returns its return value in %eax
 
-# "start" is the default label for the place to start executing code.
-start:
-    # Print "Hello World"
-    subl $4, %esp # Arguments are 12 bytes, so pad to 16
-    pushl $12 # Push the data length
-    pushl $hello_string # Push the data address
-    pushl $STDOUT # Push the file descriptor to write to.
-    subl $4, %esp # Pad the stack by 4
-    movl $SYSCALL_WRITE, %eax # Select the write syscall
-    int $0x80 # Do the syscall
+# To call a function:
+# 1. Push any of the non-preserved registers you are using (%eax, %ecx, %edx).
+# 2. Pad stack so function arguments are 16-byte-aligned.
+# 3. Push function arguments, right to left.
+# 4. Make the call with a call instruction.
+# 5. Use function return value in %eax.
+# 6. Clean up the arguments and padding from the stack.
+# 7. Restore any non-preserved registers you saved.
+
+# To be a function:
+# 1. Save the caller's %ebp, the stack frame pointer ("base pointer"), to the stack.
+# 2. Set %ebp to %esp, defining the current function's stack frame.
+# 3. Save any other preserved registers (%ebx, %esi, %edi) your function will use.
+# 4. Do the work of the function.
+#    The arguments passed to the function are addressable as 0x8(%ebp), 0xc(%ebp), 0x10(%ebp) etc. in left to right order.
+#    The return address to return to is at 0x4(%ebp).
+#    The previous %ebp value is addressable as (%ebp).
+# 5. Put your return value in %eax.
+# 6. Restore the preserved registers by popping them.
+# 7. Restore the previous %ebp value by popping it.
+# 8. Return to the caller with a ret instruction.
+
+# String length function: get the length of a null-terminated string.
+# int strlen(char* string)
+strlen:
+    # Establish our stack frame
+    pushl %ebp
+    movl %esp, %ebp
+
+    # Strategy: start %eax at the string address, advance it until it points to
+    # a null byte, and subtract out the original address.
+    # We will use %bl, the lowest byte of %ebx, as our single byte comparison scratch.
+
+    # Save the preserved register %ebx that we want to use
+    pushl %ebx
+
+    # Load the first argument into %eax
+    movl 0x8(%ebp), %eax
+Lstrlen_loop: #(This is a local label (prefix L). It is still part of the strlen function.
+    # Load the character
+    movb (%eax), %bl
+    # Test it against 0
+    # Only the first argument can be immediate (i.e. a constant)
+    cmpb $0, %bl
+    # If equal, jump to the local done label
+    je Lstrlen_done
+    # Otherwise, look at the next character
+    addl $1, %eax
+    # Loop around
+    jmp Lstrlen_loop
+Lstrlen_done:
+    # We broke out of the loop because we found the null byte.
+
+    # Subtract the address we started at to get the length, in %eax and ready to return.
+    subl  0x8(%ebp), %eax
+
+    # Restore preserved registers
+    popl %ebx
+
+    # Tear down our stack frame
+    popl %ebp
+    # Return
+    ret
+
+# Print function: print a null-terminated string.
+# void print(char* string).
+print:
+     # Establish our stack frame
+    pushl %ebp
+    movl %esp, %ebp
+
+    # Strategy: Use the preserved %ebx to hold our string length remaining to write.
+    # Use the preserved %esi to hold our next character to write.
+    # Use the preserved %edi for scratch.
+    # Do write syscalls until all of the string is written.
+
+    # Save the preserved registers that we want to use
+    pushl %ebx
+    pushl %esi
+    pushl %edi
+
+    # Load the string address (first argument)
+    movl 0x8(%ebp), %esi
+
+    # Call strlen to get its length
+    subl $12, %esp
+    pushl %esi
+    call strlen
+    addl $16, %esp
+    # Put the length (from %eax where it was returned) in %ebx
+    movl %eax, %ebx
+
+Lprint_loop:
+    # See if there are characters left to write
+    cmpl $0, %ebx
+    # If not, we are done
+    je Lprint_done
+
+    # Otherwise, do a write syscall on stdout.
+    # int write(int file_descriptor, char* data, int length)
+    # Arguments are 12 bytes, so pad to 16
+    subl $4, %esp
+    # Push the data length
+    pushl %ebx
+    # Push the data address
+    pushl %esi
+    # Push the file descriptor to write to.
+    pushl $STDOUT
+    # Pad the stack by 4 because it's a syscall
+    subl $4, %esp
+    # Select the write syscall
+    movl $SYSCALL_WRITE, %eax 
+    # Do the syscall
+    int $0x80 
     # If the syscall failed, the "carry" flag is set. So if the carry flag is
     # set, jump to the error handling code.
     jc syscall_failed 
     # Now clean up the stack
     addl $20, %esp
 
+    # The number of bytes written is in %eax. So advance our cursor.
+    subl %eax, %ebx
+    addl %eax, %esi
+
+    # Write the rest of the string, if any
+    jmp Lprint_loop
+Lprint_done:
+    # Entire string is written. 0 characters left.
+
+    # Restore preserved registers
+    popl %edi
+    popl %esi
+    popl %ebx
+
+    # Tear down our stack frame
+    popl %ebp
+    # Return
+    ret
+
+
+
+# Our label should become a symbol that other files can access
+.globl start
+
+# "start" is the default label for the place to start executing code.
+start:
+    # Get the length of "Hello World" into %eax
+    subl $12, %esp
+    pushl $hello_string
+    call strlen
+    addl $16, %esp
+
+    # Print the string
+    subl $12, %esp
+    pushl $hello_string
+    call print
+    addl $16, %esp
+
     # Run exit(10)
-    subl $12, %esp # Arguments will be 4 bytes, so pad to 16 total
-    push $0 # Push the arguments, last arg first
-    subl $4, %esp # Pad the stack by 4
-    movl $SYSCALL_EXIT, %eax # Select the syscall to call
-    int $0x80 # Do the syscall
-    addl $20, %esp # Clean up the stack (though exit shouldn't return)
+    # Arguments will be 4 bytes, so pad to 16 total
+    subl $12, %esp
+    # Push the arguments, last arg first
+    push $0 
+    # Pad the stack by 4
+    subl $4, %esp 
+    # Select the syscall to call
+    movl $SYSCALL_EXIT, %eax 
+    # Do the syscall
+    int $0x80 
+    # Clean up the stack (though exit shouldn't return)
+    addl $20, %esp 
+
+
 
 # This is where we will go if the OS complains about a syscall failing
+# Die with the error number as our exit code
 syscall_failed:
     # Run exit(%eax), since error number is in eax
     # We never cleaned the 4-byte padding from the last syscall
@@ -90,7 +248,7 @@ syscall_failed:
 # DEBUGGING
 
 # Open up the debugger with: `lldb stacklab`
-# View a function's code with e.g. `di -n start`
+# View a function's code with e.g. `di -n start` or `di -n strlen`
 # Set a breakpoint at an address with e.g. `b 0x1fee`
 # When execution is stopped, step to the next instruction with `si`.
 # Look at registers with `register read` or e.g. `register read eax`
