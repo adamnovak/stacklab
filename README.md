@@ -40,3 +40,8 @@ To build the program, run `make`. To run the program, execute the resulting `sta
  * Look at registers with `register read` or e.g. `register read eax`
  * Look at memory with `x <address>` e.g. `x 0x12345`. Remember that x86 is little-endian and the stack grows down.
  * Flags live in the eflags register, where the carry flag (low bit) indicates a syscall error.
+
+## Useful References
+
+Some information on how the stack is organized on Mac OS X, and how register preservation works, is available in [Apple's documentation](https://developer.apple.com/library/content/documentation/DeveloperTools/Conceptual/LowLevelABI/130-IA-32_Function_Calling_Conventions/IA32.html#//apple_ref/doc/uid/TP40002492-SW16). Also see the comments documenting the calling convention in the code.
+
