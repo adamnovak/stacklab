@@ -246,7 +246,7 @@ check_access:
     # Load the provided PIN (the first argument)
     movl 0x8(%ebp), %eax
     # Compare against real PIN (the second argument)
-    cmp %eax, 0x12(%ebp)
+    cmp %eax, 0xc(%ebp)
     # If they are the same, report success!
     je Lcheck_access_success
 
@@ -312,6 +312,9 @@ start:
 
     # Pretend to read some user data
     movl $0xACCE55ED, entered_pin
+
+    # Uncomment the line below to test and see that the PIN checker really works
+    #movl $0xDEADBEEF, entered_pin
 
     # Check the PIN number and alert the authorities if incorrect
     subl $8, %esp
