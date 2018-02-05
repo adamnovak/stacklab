@@ -20,6 +20,7 @@ Your task is to cause the program to report "Access Granted", by changing only t
 
  * The solution MUST modify only those lines.
  * The solution MUST cause the compiled program to print "Access Granted" and no "ALERT!" lines.
+ * The solution MUST explain how and why it works with comments.
  * The solution SHOULD preserve the functionality of the `square` function.
  * The solution SHOULD allow the correct PIN to continue to work.
  * The solution SHOULD continue to work correctly if the correct PIN is changed.
