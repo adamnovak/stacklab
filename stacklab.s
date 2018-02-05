@@ -44,11 +44,17 @@
 
 # This puts a string, followed by a terminating null byte
 hello_string:
-.asciz "Hello World\n"
+.asciz "Hello World!\n"
 grant_string:
 .asciz "Access Granted\n"
 deny_string:
 .asciz "Access Denied\n"
+alert_string:
+.asciz "ALERT!\n"
+
+# This just does a 4-byte value
+correct_pin:
+.long 0xDEADBEEF
 
 # Here are some functions that get called
 # The function calling convention is different from the syscall calling convention and lives here:
@@ -121,9 +127,9 @@ Lstrlen_done:
     ret
 
 # Print function: print a null-terminated string.
-# void print(char* string).
+# void print(char* string)
 print:
-     # Establish our stack frame
+    # Establish our stack frame
     pushl %ebp
     movl %esp, %ebp
 
@@ -195,8 +201,98 @@ Lprint_done:
     # Return
     ret
 
+# Square function: square to the passed argument and return it
+# int square(int arg)
+square:
+    # Establish our stack frame
+    pushl %ebp
+    movl %esp, %ebp
 
+#*#*#* START LAB CHANGES HERE
+    # TODO: Add amazing stack walking code here!
+#*#*#* STOP LAB CHANGES HERE
 
+    # Load the argument (first argument)
+    movl 0x8(%ebp), %eax
+    # Multiply it by itself and leave it in %eax to return
+    # Note that mul always multiplies into %eax
+    mul %eax
+
+    # Tear down our stack frame
+    popl %ebp
+    # Return
+    ret
+
+# Access validation function
+# Check if the correct PIN has been passed and print a message
+# void check_access(int provoded_pin, int correct_pin)
+check_access:
+    # Establish our stack frame
+    pushl %ebp
+    movl %esp, %ebp
+
+    # Save the preserved registers that we want to use
+    pushl %ebx
+
+    # Compute the number of times to say ALERT if the PIN is wrong
+    subl $12, %esp
+    pushl $3
+    call square
+    addl $16, %esp
+
+    # Save it in %ebx
+    movl %eax, %ebx
+
+    # Load the provided PIN (the first argument)
+    movl 0x8(%ebp), %eax
+    # Compare against real PIN (the second argument)
+    cmp %eax, 0x12(%ebp)
+    # If they are the same, report success!
+    je Lcheck_access_success
+
+    # Otherwise, the PIN is wrong.
+
+    # Print our failure message
+    subl $12, %esp
+    pushl $deny_string
+    call print
+    addl $16, %esp
+
+    # Print alert the right number of times
+Lcheck_access_loop:
+    # If we ran out of times to do it, stop
+    cmp $0, %ebx
+    je Lcheck_access_finish
+
+    # Otherwise, print it once
+    subl $12, %esp
+    pushl $alert_string
+    call print
+    addl $16, %esp
+
+    # Decrement the count
+    subl $1, %ebx
+
+    # And check again
+    jmp Lcheck_access_loop
+
+Lcheck_access_success:
+    # The PIN was correct. Say so.
+    subl $12, %esp
+    pushl $grant_string
+    call print
+    addl $16, %esp
+
+Lcheck_access_finish:
+    # Restore preserved registers
+    popl %ebx
+
+    # Tear down our stack frame
+    popl %ebp
+    # Return
+    ret
+
+    
 # Our label should become a symbol that other files can access
 .globl start
 
@@ -214,12 +310,25 @@ start:
     call print
     addl $16, %esp
 
-    # Run exit(10)
+    # Pretend to read some user data
+    movl $0xACCE55ED, entered_pin
+
+    # Check the PIN number and alert the authorities if incorrect
+    subl $8, %esp
+    # Argument 2: correct PIN
+    # We don't use $ because we want the contents of this address; not the address itself
+    pushl correct_pin
+    # Argument 1: submitted PIN
+    pushl entered_pin
+    call check_access
+    addl $16, %esp
+
+    # Run the exit syscall with argument 0 (for success)
     # Arguments will be 4 bytes, so pad to 16 total
     subl $12, %esp
     # Push the arguments, last arg first
     push $0 
-    # Pad the stack by 4
+    # Pad the stack by 4 because it's a syscall
     subl $4, %esp 
     # Select the syscall to call
     movl $SYSCALL_EXIT, %eax 
@@ -244,6 +353,10 @@ syscall_failed:
 .section __DATA,__data
 # This is where global mutable data lives.
 
+# User data reading code will set this global to the PIN that has been entered
+entered_pin:
+.long 0x00000000
+
 
 # DEBUGGING
 
@@ -252,6 +365,7 @@ syscall_failed:
 # Set a breakpoint at an address with e.g. `b 0x1fee`
 # When execution is stopped, step to the next instruction with `si`.
 # Look at registers with `register read` or e.g. `register read eax`
+# Look at memory with `x <address>` e.g. `x 0x12345`. Remember that x86 is little-endian and the stack grows down.
 # Flags live in the eflags register, where the carry flag (low bit) indicates a syscall error.
 
 
